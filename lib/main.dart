@@ -32,9 +32,19 @@ class SkiMapPage extends StatefulWidget {
 
 class _SkiMapPageState extends State<SkiMapPage> {
   LatLng? currentLocation;
-  double heading = 0; // Direzione reale
-  double mapRotation = 0; // Rotazione della mappa
+  LatLng? lastLocation;
+
+  double heading = 0;
+  double mapRotation = 0;
+  double currentZoom = 14;
+
   late final MapController mapController;
+
+  // 🔒 BOUNDS DOLOMITI SUPERSKI
+  final LatLngBounds dolomitiBounds = LatLngBounds(
+    LatLng(45.95, 10.85), // Sud-Ovest
+    LatLng(46.75, 12.40), // Nord-Est
+  );
 
   @override
   void initState() {
@@ -42,57 +52,85 @@ class _SkiMapPageState extends State<SkiMapPage> {
     mapController = MapController();
     _determinePosition();
 
-    // Aggiorna heading dal sensore
+    // Bussola
     FlutterCompass.events?.listen((event) {
       if (event.heading != null) {
-        setState(() {
-          heading = event.heading!;
-        });
+        setState(() => heading = event.heading!);
+      }
+    });
+
+    // GPS continuo
+    Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 3,
+      ),
+    ).listen((position) {
+      final newLocation = LatLng(position.latitude, position.longitude);
+
+      if (!dolomitiBounds.contains(newLocation)) return;
+
+      setState(() => currentLocation = newLocation);
+
+      if (lastLocation == null ||
+          Distance().as(LengthUnit.Meter, lastLocation!, newLocation) > 3) {
+        lastLocation = newLocation;
+        mapController.move(newLocation, currentZoom);
       }
     });
   }
 
   Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    final fallback = LatLng(46.45, 11.75); // centro Dolomiti Superski
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      setState(() => currentLocation = fallback);
+      return;
     }
 
-    if (permission == LocationPermission.deniedForever) return;
-
-    Position position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
-
-    setState(() {
-      currentLocation = LatLng(position.latitude, position.longitude);
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (currentLocation != null) {
-        mapController.move(currentLocation!, 14);
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        setState(() => currentLocation = fallback);
+        return;
       }
-    });
+    }
+    if (permission == LocationPermission.deniedForever) {
+      setState(() => currentLocation = fallback);
+      return;
+    }
+
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final loc = LatLng(position.latitude, position.longitude);
+
+      setState(
+        () => currentLocation = dolomitiBounds.contains(loc) ? loc : fallback,
+      );
+      lastLocation = currentLocation;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        mapController.move(currentLocation!, currentZoom);
+      });
+    } catch (_) {
+      setState(() => currentLocation = fallback);
+    }
   }
 
-  // Tap sulla bussola riallinea al nord
   void resetMapRotation() {
     setState(() {
-      mapRotation = 0; // Aggiorna stato
-      mapController.rotate(0); // Imposta la rotazione della mappa a nord
+      mapRotation = 0;
+      mapController.rotate(0);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    const String mapTilerKey = 'k2jksKCxeEV932oPOyNo';
+    const mapTilerKey = 'k2jksKCxeEV932oPOyNo';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Dolomiti Ski Map'), centerTitle: true),
@@ -104,21 +142,37 @@ class _SkiMapPageState extends State<SkiMapPage> {
                   mapController: mapController,
                   options: MapOptions(
                     initialCenter: currentLocation!,
-                    initialZoom: 14,
-                    minZoom: 5,
+                    initialZoom: currentZoom,
+                    minZoom: 11,
                     maxZoom: 18,
+
+                    // 🔒 BLOCCO AREA DOLOMITI
+                    cameraConstraint: CameraConstraint.contain(
+                      bounds: dolomitiBounds,
+                    ),
+
+                    interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.all,
+                    ),
                   ),
                   children: [
+                    // ❄️ MAPPA INVERNALE
                     TileLayer(
                       urlTemplate:
-                          "https://api.maptiler.com/maps/basic/{z}/{x}/{y}.png?key=$mapTilerKey",
+                          "https://api.maptiler.com/maps/winter/{z}/{x}/{y}.png?key=$mapTilerKey",
                       userAgentPackageName: 'com.example.dolomiti_ski_app',
                     ),
+
+                    // 🎿 PISTE DA SCI
                     TileLayer(
                       urlTemplate:
                           "https://tiles.opensnowmap.org/pistes/{z}/{x}/{y}.png",
                       userAgentPackageName: 'com.example.dolomiti_ski_app',
+                      tileBuilder: (context, tileWidget, tile) =>
+                          Opacity(opacity: 0.95, child: tileWidget),
                     ),
+
+                    // 📍 POSIZIONE
                     MarkerLayer(
                       markers: [
                         Marker(
@@ -136,25 +190,14 @@ class _SkiMapPageState extends State<SkiMapPage> {
                   ],
                 ),
 
-                // Bussola in alto a destra con rilevamento orientamento
+                // 🧭 BUSSOLA
                 Positioned(
                   top: 16,
                   right: 16,
-                  child: OrientationBuilder(
-                    builder: (context, orientation) {
-                      double screenRotation = 0;
-                      if (orientation == Orientation.landscape) {
-                        screenRotation = pi / 2; // 90° in radianti
-                      }
-                      return Transform.rotate(
-                        angle: screenRotation,
-                        child: CompassWidget(
-                          heading: heading,
-                          mapRotation: mapRotation,
-                          onTap: resetMapRotation,
-                        ),
-                      );
-                    },
+                  child: CompassWidget(
+                    heading: heading,
+                    mapRotation: mapRotation,
+                    onTap: resetMapRotation,
                   ),
                 ),
               ],
@@ -163,11 +206,12 @@ class _SkiMapPageState extends State<SkiMapPage> {
   }
 }
 
-// ====================== BUSSOLA INTERATTIVA ======================
+// ================= BUSSOLA =================
+
 class CompassWidget extends StatelessWidget {
-  final double heading; // Heading reale dal sensore
-  final double mapRotation; // Rotazione mappa
-  final VoidCallback onTap; // Azione al click sulla bussola
+  final double heading;
+  final double mapRotation;
+  final VoidCallback onTap;
 
   const CompassWidget({
     super.key,
@@ -178,35 +222,28 @@ class CompassWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Differenza tra nord e direzione mappa
-    final angleDiff = (heading - mapRotation) % 360;
-    final centralCardinal = _angleToCardinal(
-      angleDiff < 0 ? angleDiff + 360 : angleDiff,
-    );
+    final angle = (heading - mapRotation) % 360;
 
     return GestureDetector(
-      onTap: onTap, // Riallinea mappa al nord
+      onTap: onTap,
       child: SizedBox(
         width: 70,
         height: 70,
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Corona esterna che ruota con la mappa
             Transform.rotate(
               angle: -mapRotation * pi / 180,
               child: CustomPaint(
                 size: const Size(70, 70),
-                painter: _CompassCirclePainter(),
+                painter: _CompassPainter(),
               ),
             ),
-            // Lettera dinamica al centro
             Text(
-              centralCardinal,
+              _cardinal(angle < 0 ? angle + 360 : angle),
               style: const TextStyle(
-                color: Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: 16,
+                color: Colors.white,
               ),
             ),
           ],
@@ -215,68 +252,53 @@ class CompassWidget extends StatelessWidget {
     );
   }
 
-  String _angleToCardinal(double angle) {
-    // 16 punti cardinali (22.5° ciascuno)
-    if (angle >= 348.75 || angle < 11.25) return 'N';
-    if (angle >= 11.25 && angle < 33.75) return 'NNE';
-    if (angle >= 33.75 && angle < 56.25) return 'NE';
-    if (angle >= 56.25 && angle < 78.75) return 'ENE';
-    if (angle >= 78.75 && angle < 101.25) return 'E';
-    if (angle >= 101.25 && angle < 123.75) return 'ESE';
-    if (angle >= 123.75 && angle < 146.25) return 'SE';
-    if (angle >= 146.25 && angle < 168.75) return 'SSE';
-    if (angle >= 168.75 && angle < 191.25) return 'S';
-    if (angle >= 191.25 && angle < 213.75) return 'SSW';
-    if (angle >= 213.75 && angle < 236.25) return 'SW';
-    if (angle >= 236.25 && angle < 258.75) return 'WSW';
-    if (angle >= 258.75 && angle < 281.25) return 'W';
-    if (angle >= 281.25 && angle < 303.75) return 'WNW';
-    if (angle >= 303.75 && angle < 326.25) return 'NW';
-    return 'NNW';
+  String _cardinal(double a) {
+    const dirs = [
+      'N',
+      'NNE',
+      'NE',
+      'ENE',
+      'E',
+      'ESE',
+      'SE',
+      'SSE',
+      'S',
+      'SSW',
+      'SW',
+      'WSW',
+      'W',
+      'WNW',
+      'NW',
+      'NNW',
+    ];
+    return dirs[((a + 11.25) % 360 ~/ 22.5)];
   }
 }
 
-class _CompassCirclePainter extends CustomPainter {
+class _CompassPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
+    final c = Offset(size.width / 2, size.height / 2);
+    final r = size.width / 2;
 
-    final paintCircle = Paint()
-      ..color = Colors.black87
-      ..style = PaintingStyle.fill;
-
-    final paintBorder = Paint()
-      ..color = Colors.white54
-      ..strokeWidth = 1.6
-      ..style = PaintingStyle.stroke;
-
-    // Cerchio esterno
-    canvas.drawCircle(center, radius, paintCircle);
-    canvas.drawCircle(center, radius, paintBorder);
-
-    // Tacchette della bussola
-    final paintTick = Paint()..strokeWidth = 1.5;
+    canvas.drawCircle(c, r, Paint()..color = Colors.black87);
 
     for (int i = 0; i < 360; i += 15) {
-      final angle = i * pi / 180;
-      final tickLength = (i % 90 == 0) ? 10.0 : (i % 45 == 0 ? 6.0 : 4.0);
+      final a = i * pi / 180;
+      final len = i % 90 == 0 ? 10.0 : 5.0;
+      final p1 = Offset(c.dx + (r - len) * cos(a), c.dy + (r - len) * sin(a));
+      final p2 = Offset(c.dx + r * cos(a), c.dy + r * sin(a));
 
-      final start = Offset(
-        center.dx + (radius - tickLength - 4) * cos(angle),
-        center.dy + (radius - tickLength - 4) * sin(angle),
+      canvas.drawLine(
+        p1,
+        p2,
+        Paint()
+          ..color = i == 0 ? Colors.red : Colors.white
+          ..strokeWidth = 1.5,
       );
-      final end = Offset(
-        center.dx + radius * cos(angle),
-        center.dy + radius * sin(angle),
-      );
-
-      // Tacchetta nord fissa in rosso, le altre bianche
-      paintTick.color = (i == 0) ? Colors.red : Colors.white;
-      canvas.drawLine(start, end, paintTick);
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(_) => false;
 }
