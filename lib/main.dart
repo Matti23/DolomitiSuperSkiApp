@@ -42,7 +42,7 @@ class _SkiMapPageState extends State<SkiMapPage> with TickerProviderStateMixin {
   double heading = 0;
   double mapRotation = 0;
   double currentZoom = 14;
-
+  bool isScenic = false; // stato dello switch
   late final MapController mapController;
   late final AnimationController _markerController;
   late final DraggableScrollableController sheetController;
@@ -493,7 +493,7 @@ class _SkiMapPageState extends State<SkiMapPage> with TickerProviderStateMixin {
                                     ),
                                     const SizedBox(height: 8),
 
-                                    // Partenza
+                                    // PARTENZA
                                     TextField(
                                       controller: startController,
                                       style: const TextStyle(
@@ -520,37 +520,80 @@ class _SkiMapPageState extends State<SkiMapPage> with TickerProviderStateMixin {
                                     ),
                                     const SizedBox(height: 8),
 
-                                    // Lista dinamica delle tappe intermedie
-                                    ...intermediateControllers.map(
-                                      (controller) => Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 6,
-                                        ),
-                                        child: TextField(
-                                          controller: controller,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                          ),
-                                          decoration: InputDecoration(
-                                            hintText: 'Tappa intermedia',
-                                            hintStyle: const TextStyle(
-                                              color: Colors.white54,
+                                    // TAPPE INTERMEDIE
+                                    ...intermediateControllers.asMap().entries.map((
+                                      entry,
+                                    ) {
+                                      int index = entry.key;
+                                      TextEditingController ctrl = entry.value;
+                                      return Row(
+                                        children: [
+                                          Expanded(
+                                            child: TextField(
+                                              controller: ctrl,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                              ),
+                                              decoration: InputDecoration(
+                                                hintText:
+                                                    'Tappa intermedia ${index + 1}',
+                                                hintStyle: const TextStyle(
+                                                  color: Colors.white54,
+                                                ),
+                                                filled: true,
+                                                fillColor: Colors.black38,
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
+                                                  borderSide: BorderSide.none,
+                                                ),
+                                                prefixIcon: const Icon(
+                                                  Icons.place,
+                                                  color: Colors.cyanAccent,
+                                                ),
+                                              ),
                                             ),
-                                            filled: true,
-                                            fillColor: Colors.black26,
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                              borderSide: BorderSide.none,
+                                          ),
+                                          IconButton(
+                                            onPressed: () {
+                                              setState(() {
+                                                intermediateControllers
+                                                    .removeAt(index);
+                                              });
+                                            },
+                                            icon: const Icon(
+                                              Icons.close,
+                                              color: Colors.redAccent,
+                                              size: 20,
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                    ),
+                                        ],
+                                      );
+                                    }).toList(),
 
+                                    // PULSANTE AGGIUNGI TAPPA
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.end,
+                                      children: [
+                                        IconButton(
+                                          onPressed: () {
+                                            setState(() {
+                                              intermediateControllers.add(
+                                                TextEditingController(),
+                                              );
+                                            });
+                                          },
+                                          icon: const Icon(
+                                            Icons.add,
+                                            color: Colors.cyanAccent,
+                                            size: 24,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                     const SizedBox(height: 8),
 
-                                    // Arrivo
+                                    // ARRIVO
                                     TextField(
                                       controller: endController,
                                       style: const TextStyle(
@@ -578,25 +621,40 @@ class _SkiMapPageState extends State<SkiMapPage> with TickerProviderStateMixin {
                                     ),
                                     const SizedBox(height: 8),
 
-                                    // Pulsante Vai
-                                    ElevatedButton(
-                                      onPressed: _goToDestination,
-                                      child: const Text('Vai'),
+                                    // SWITCH PANORAMICO / VELOCE
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const Text(
+                                          'Percorso panoramico',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                        Switch(
+                                          value: isScenic,
+                                          onChanged: (value) {
+                                            setState(() {
+                                              isScenic = value;
+                                            });
+                                          },
+                                          activeColor: Colors.cyanAccent,
+                                        ),
+                                        const Text(
+                                          'Percorso veloce',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     const SizedBox(height: 8),
 
-                                    // Pulsante aggiungi tappa intermedia
+                                    // PULSANTE VAI
                                     ElevatedButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          intermediateControllers.add(
-                                            TextEditingController(),
-                                          );
-                                        });
-                                      },
-                                      child: const Text(
-                                        'Aggiungi tappa intermedia',
-                                      ),
+                                      onPressed: _goToDestination,
+                                      child: const Text('Vai'),
                                     ),
                                   ],
                                 ],
